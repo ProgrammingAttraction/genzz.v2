@@ -29,7 +29,7 @@ import live_games from "../../assets/live.png";
 import provider_img from "../../assets/provider.png";
 import blackjack_img from "../../assets/blackjack.png";
 import others_img from "../../assets/category/other.svg";
-
+import logo from "../../assets/logo.png"
 const API_BASE_URL = import.meta.env.VITE_API_KEY_Base_URL;
 
 // Category Item Component
@@ -377,14 +377,9 @@ const ProvidersSlider = ({ providers, t }) => {
 
 // Full Screen Loader Component
 const FullScreenLoader = ({ t }) => (
-  <div className="fixed inset-0 bg-[rgba(0,0,0,0.4)] backdrop-blur-md z-[100000] flex flex-col items-center justify-center">
+  <div className="fixed inset-0 bg-[rgba(0,0,0,0.2)] backdrop-blur-md z-[100000] flex flex-col items-center justify-center">
     <div className="text-center">
-      <p className="text-theme_color2 font-medium text-lg animate-pulse">
-        {t.loadingPleaseWait}
-      </p>
-      <p className="text-gray-500 text-sm mt-2">
-        {t.preparingYourData}
-      </p>
+      <img src={logo} className='w-[140px]' alt="" />
     </div>
   </div>
 );

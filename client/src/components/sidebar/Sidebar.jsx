@@ -40,6 +40,8 @@ import { useUser } from '../../context/UserContext';
 import { HiIdentification } from "react-icons/hi";
 import { GiGiftTrap } from 'react-icons/gi';
 import { MdRefresh, MdInfoOutline, MdCheckCircle, MdAttachMoney } from 'react-icons/md';
+import { FaFilter } from "react-icons/fa";
+
 // Images
 import popular_img from "../../assets/popular.png"
 import dice_img from "../../assets/dice.png";
@@ -3006,62 +3008,499 @@ const WithdrawalTabContent = ({ setActiveLeftTab }) => {
 // Betting Record Tab Content
 const BettingRecordTabContent = () => {
   const { t, language } = useContext(LanguageContext);
+  const { userData } = useUser(); // Add this to get user data
   const [timeRange, setTimeRange] = useState('today');
   const [loading, setLoading] = useState(false);
   const [records, setRecords] = useState([]);
+  const [summary, setSummary] = useState({
+    totalBets: 0,
+    totalWins: 0,
+    totalRefunds: 0,
+    netProfit: 0
+  });
+  const [filterOpen, setFilterOpen] = useState(false);
+  const [filterGame, setFilterGame] = useState('');
+  const [filterDate, setFilterDate] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pagination, setPagination] = useState({ page: 1, limit: 10, total: 0, pages: 0 });
+  const [error, setError] = useState('');
+  const itemsPerPage = 10;
 
-  const formatCurrency = (amount) => new Intl.NumberFormat(language?.code === 'bn' ? 'bn-BD' : 'en-US', { minimumFractionDigits: 2 }).format(amount || 0);
+  const base_url = import.meta.env.VITE_API_KEY_Base_URL;
+
+  const formatCurrency = (amount) => new Intl.NumberFormat(language?.code === 'bn' ? 'bn-BD' : 'en-US', { 
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  }).format(amount || 0);
+
+  const formatDate = (dateString) => {
+    if (!dateString) return '—';
+    return new Intl.DateTimeFormat(language.code === 'bn' ? 'bn-BD' : 'en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true
+    }).format(new Date(dateString));
+  };
+
+  const getDateRange = (range) => {
+    const now = new Date();
+    let startDate, endDate;
+    switch (range) {
+      case 'today':
+        startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        endDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+        break;
+      case 'yesterday':
+        startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+        endDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        break;
+      case 'week':
+        startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - now.getDay());
+        endDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+        break;
+      case 'month':
+        startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+        endDate = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+        break;
+      default:
+        startDate = null;
+        endDate = null;
+    }
+    return {
+      startDate: startDate ? startDate.toISOString().split('T')[0] : null,
+      endDate: endDate ? endDate.toISOString().split('T')[0] : null,
+    };
+  };
+
+  // Fetch betting records from API
+  const fetchBettingRecords = async (page = 1, range = timeRange) => {
+    if (!userData?._id) return;
+    
+    setLoading(true);
+    setError('');
+    
+    try {
+      const { startDate, endDate } = getDateRange(range);
+      const response = await axios.get(`${base_url}/user/game-history/${userData._id}`, {
+        params: { 
+          page, 
+          limit: itemsPerPage, 
+          startDate, 
+          endDate 
+        },
+        headers: { 
+          Authorization: `Bearer ${localStorage.getItem('token')}` 
+        }
+      });
+
+      if (response.data.success) {
+        const { sessions: sessionData, summary: summaryData, pagination: paginationData } = response.data.data;
+        
+        // Process the sessions data
+        const processed = (sessionData || []).map(session => {
+          const transactions = session.transactions || [];
+          const totalBet = transactions.filter(tx => tx.type === 'bet').reduce((s, tx) => s + (tx.amount || 0), 0);
+          const totalWin = transactions.filter(tx => tx.type === 'win').reduce((s, tx) => s + (tx.amount || 0), 0);
+          const totalRefund = transactions.filter(tx => tx.type === 'refund').reduce((s, tx) => s + (tx.amount || 0), 0);
+          
+          // Determine status
+          let status = 'loss';
+          if (totalWin > 0) status = 'win';
+          else if (totalRefund > 0) status = 'refund';
+          
+          return { 
+            ...session, 
+            totalBet, 
+            totalWin, 
+            totalRefund, 
+            netResult: totalWin + totalRefund - totalBet,
+            status,
+            game: session.game_name || '—',
+            date: session.started_at || session.createdAt,
+            bet: totalBet,
+            win: totalWin,
+            refund: totalRefund
+          };
+        });
+        
+        setRecords(processed);
+        setSummary(summaryData || { totalBets: 0, totalWins: 0, totalRefunds: 0, netProfit: 0 });
+        setPagination({
+          page: paginationData?.page || page,
+          limit: itemsPerPage,
+          total: paginationData?.total || 0,
+          pages: paginationData?.pages || 0,
+        });
+        setCurrentPage(page);
+      } else {
+        setError(t.fetchRecordsError || 'Failed to load records.');
+      }
+    } catch (err) {
+      console.error('Error fetching betting records:', err);
+      setError(err.response?.data?.message || t.fetchRecordsError || 'Failed to load records.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Filter records based on game name and date (client-side filtering)
+  const filteredRecords = records.filter(record => {
+    const matchGame = filterGame
+      ? (record.game || '').toLowerCase().includes(filterGame.toLowerCase())
+      : true;
+    const matchDate = filterDate
+      ? new Date(record.date).toISOString().slice(0, 10) === filterDate
+      : true;
+    return matchGame && matchDate;
+  });
+
+  const hasActiveFilter = filterGame || filterDate;
+
+  // Time range labels
+  const timeRanges = [
+    { id: 'today', label: t?.today || 'Today', icon: '📅' },
+    { id: 'yesterday', label: t?.yesterday || 'Yesterday', icon: '📆' },
+    { id: 'week', label: t?.week || 'This Week', icon: '📊' },
+    { id: 'month', label: t?.month || 'This Month', icon: '📈' },
+    { id: 'all', label: t?.all || 'All Time', icon: '🎯' },
+  ];
+
+  // Fetch data when time range or user changes
+  useEffect(() => {
+    if (userData?._id) {
+      fetchBettingRecords(1, timeRange);
+    }
+  }, [userData, timeRange]);
+
+  const handleTimeRangeChange = (range) => {
+    setTimeRange(range);
+    setCurrentPage(1);
+    setFilterGame('');
+    setFilterDate('');
+  };
+
+  const handlePageChange = (newPage) => {
+    if (newPage >= 1 && newPage <= pagination.pages) {
+      fetchBettingRecords(newPage, timeRange);
+    }
+  };
+
+  const getStatusBadge = (status) => {
+    if (status === 'win') {
+      return <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">Win</span>;
+    } else if (status === 'refund') {
+      return <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">Refund</span>;
+    } else if (status === 'loss') {
+      return <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">Loss</span>;
+    }
+    return null;
+  };
+
+  // Display records (either paginated from API or filtered)
+  const displayRecords = hasActiveFilter ? filteredRecords : records;
 
   return (
-    <div className="bg-gray-50 p-4 rounded-lg border border-gray-200">
-      <h3 className="text-lg font-semibold mb-4 text-gray-800">{t?.bettingRecord || 'বেটিং রেকর্ড'}</h3>
-
-      <div className="flex flex-wrap gap-2 mb-4">
-        {['today', 'yesterday', 'week', 'month', 'all'].map((range) => (
-          <button
-            key={range}
-            className={`px-3 py-1.5 rounded-lg text-sm cursor-pointer transition-colors ${
-              timeRange === range ? 'bg-theme_color2 text-white' : 'bg-white border border-gray-300 text-gray-700 hover:bg-gray-100'
-            }`}
-            onClick={() => setTimeRange(range)}
+    <div className="bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl shadow-sm">
+      {/* Filter Drawer */}
+      {filterOpen && (
+        <div
+          className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+          onClick={() => setFilterOpen(false)}
+        >
+          <div
+            className="bg-white w-full max-w-md rounded-2xl shadow-xl animate-fadeInUp"
+            onClick={e => e.stopPropagation()}
           >
-            {range === 'today' && (t?.today || 'আজ')}
-            {range === 'yesterday' && (t?.yesterday || 'গতকাল')}
-            {range === 'week' && (t?.week || 'সপ্তাহ')}
-            {range === 'month' && (t?.month || 'মাস')}
-            {range === 'all' && (t?.all || 'সব')}
-          </button>
-        ))}
-      </div>
+            <div className="p-5 border-b border-gray-100">
+              <h3 className="text-xl font-bold text-gray-800">Filter Bets</h3>
+              <p className="text-sm text-gray-500 mt-1">Narrow down your betting history</p>
+            </div>
+            
+            <div className="p-5 space-y-4">
+              {/* Game Name */}
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">
+                  Game Name
+                </label>
+                <input
+                  type="text"
+                  value={filterGame}
+                  onChange={e => setFilterGame(e.target.value)}
+                  placeholder="Search by game name..."
+                  className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm outline-none focus:border-cyan-400 focus:ring-2 focus:ring-cyan-100 bg-gray-50 text-gray-700 transition-all"
+                />
+              </div>
 
-      {loading ? (
-        <div className="flex justify-center py-8"><div className="animate-spin rounded-full h-8 w-8 border-3 border-t-gray-800 border-b-gray-800 border-l-transparent border-r-transparent"></div></div>
-      ) : (
-        <div className="overflow-x-auto border border-gray-200 rounded-lg">
-          <table className="min-w-full">
-            <thead className="bg-gray-100">
-              <tr>
-                <th className="py-2 px-3 text-left text-xs font-medium text-gray-600 uppercase border-b border-gray-200">{t?.date || 'তারিখ'}</th>
-                <th className="py-2 px-3 text-left text-xs font-medium text-gray-600 uppercase border-b border-gray-200">{t?.gameName || 'গেম'}</th>
-                <th className="py-2 px-3 text-left text-xs font-medium text-gray-600 uppercase border-b border-gray-200">{t?.totalBet || 'মোট বেট'}</th>
-                <th className="py-2 px-3 text-left text-xs font-medium text-gray-600 uppercase border-b border-gray-200">{t?.totalWin || 'মোট জয়'}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {records.length > 0 ? records.map((record, i) => (
-                <tr key={i} className="hover:bg-gray-50">
-                  <td className="py-2 px-3 border-b border-gray-200 text-sm text-gray-600">{record.date}</td>
-                  <td className="py-2 px-3 border-b border-gray-200 text-sm text-gray-600">{record.game}</td>
-                  <td className="py-2 px-3 border-b border-gray-200 text-sm text-blue-600">{formatCurrency(record.bet)} ৳</td>
-                  <td className="py-2 px-3 border-b border-gray-200 text-sm text-green-600">{formatCurrency(record.win)} ৳</td>
-                </tr>
-              )) : (
-                <tr><td colSpan="4" className="py-6 text-center text-gray-500 text-sm">{t?.noRecords || 'কোন রেকর্ড পাওয়া যায়নি'}</td></tr>
-              )}
-            </tbody>
-          </table>
+              {/* Date */}
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">
+                  Specific Date
+                </label>
+                <input
+                  type="date"
+                  value={filterDate}
+                  onChange={e => setFilterDate(e.target.value)}
+                  className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm outline-none focus:border-cyan-400 focus:ring-2 focus:ring-cyan-100 bg-gray-50 text-gray-700 transition-all"
+                />
+              </div>
+            </div>
+
+            <div className="p-5 border-t border-gray-100 flex gap-3">
+              <button
+                onClick={() => { setFilterGame(''); setFilterDate(''); setFilterOpen(false); }}
+                className="flex-1 py-2.5 border border-gray-300 rounded-xl text-sm text-gray-600 font-semibold hover:bg-gray-50 transition-colors"
+              >
+                Clear All
+              </button>
+              <button
+                onClick={() => setFilterOpen(false)}
+                className="flex-1 py-2.5 bg-gradient-to-r from-cyan-500 to-blue-500 text-white rounded-xl text-sm font-semibold hover:shadow-lg transition-all"
+              >
+                Apply Filters
+              </button>
+            </div>
+          </div>
         </div>
       )}
+
+      <div className="p-6">
+        {/* Header Section */}
+        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 mb-6">
+          <div>
+            <h3 className="text-2xl font-bold text-gray-800">
+              {t?.bettingRecord || 'Betting History'}
+            </h3>
+            <p className="text-sm text-gray-500 mt-1">
+              View and analyze your betting activity
+            </p>
+          </div>
+          
+          <div className="flex items-center gap-3">
+            {hasActiveFilter && displayRecords.length > 0 && (
+              <div className="flex items-center gap-2 px-3 py-2 bg-orange-50 rounded-lg border border-orange-200">
+                <span className="text-orange-600 text-sm">🎯</span>
+                <span className="text-orange-700 text-sm font-medium">
+                  {displayRecords.length} results
+                </span>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Time Range Selector */}
+        <div className="mb-6">
+          <div className="flex flex-wrap gap-2">
+            {timeRanges.map((range) => (
+              <button
+                key={range.id}
+                className={`px-4 py-2 rounded-lg text-sm font-medium transition-all transform hover:scale-105 ${
+                  timeRange === range.id
+                    ? 'bg-gradient-to-r from-cyan-500 to-blue-500 text-white shadow-md'
+                    : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-50 hover:border-gray-300'
+                }`}
+                onClick={() => handleTimeRangeChange(range.id)}
+              >
+                {range.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Error Message */}
+        {error && (
+          <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-xl text-red-600 text-sm">
+            {error}
+          </div>
+        )}
+
+        {/* Main Table */}
+        {loading ? (
+          <div className="flex justify-center items-center py-16">
+            <div className="text-center">
+              <div className="animate-spin rounded-full h-12 w-12 border-4 border-t-cyan-500 border-b-cyan-500 border-l-transparent border-r-transparent mx-auto"></div>
+              <p className="text-gray-500 mt-3">Loading betting records...</p>
+            </div>
+          </div>
+        ) : (
+          <div className="bg-white rounded-xl  overflow-hidden border border-gray-200">
+            {/* Desktop Table View */}
+            <div className="hidden lg:block overflow-x-auto">
+              <table className="w-full">
+                <thead className="bg-gradient-to-r from-gray-50 to-gray-100 border-b-2 border-gray-200">
+                  <tr>
+                                      <th className="py-2 px-4 text-left text-sm border-b border-gray-600">{t.date}</th>
+                        <th className="py-2 px-4 text-left text-sm border-b border-gray-600">{t.gameName}</th>
+                 <th className="py-2 px-4 text-left text-sm border-b border-gray-600">{t.totalBet}</th>
+          <th className="py-2 px-4 text-left text-sm border-b border-gray-600">{t.totalWin}</th>
+              <th className="py-2 px-4 text-left text-sm border-b border-gray-600">{t.totalRefund}</th>
+                       <th className="py-2 px-4 text-left text-sm border-b border-gray-600">
+                                        {t.status || 'Status'}
+                                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {displayRecords.length > 0 ? (
+                    displayRecords.map((record, index) => (
+                      <tr key={record.session_id || index} className="hover:bg-gray-50 transition-colors">
+                        <td className="py-3 px-6 text-sm text-gray-600 whitespace-nowrap">
+                          {formatDate(record.date)}
+                        </td>
+                        <td className="py-3 px-6 text-sm font-medium text-gray-800">
+                          {record.game}
+                        </td>
+                        <td className="py-3 px-6 text-sm text-blue-600 font-semibold text-right">
+                          ৳{formatCurrency(record.bet)}
+                        </td>
+                        <td className="py-3 px-6 text-sm text-green-600 font-semibold text-right">
+                          ৳{formatCurrency(record.win)}
+                        </td>
+                        <td className="py-3 px-6 text-sm text-yellow-600 font-semibold text-right">
+                          ৳{formatCurrency(record.refund || 0)}
+                        </td>
+                        <td className="py-3 px-6 text-center">
+                          {getStatusBadge(record.status)}
+                        </td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan="6" className="py-12 text-center">
+                        <div className="flex flex-col items-center justify-center">
+                          <svg className="w-16 h-16 text-gray-300 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} 
+                              d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" 
+                            />
+                          </svg>
+                          <p className="text-gray-500 font-medium">No betting records found</p>
+                          <p className="text-sm text-gray-400 mt-1">Try adjusting your filters or time range</p>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Mobile Card View */}
+            <div className="lg:hidden">
+              {displayRecords.length > 0 ? (
+                <div className="divide-y divide-gray-100">
+                  {displayRecords.map((record, index) => (
+                    <div key={record.session_id || index} className="p-4 hover:bg-gray-50 transition-colors">
+                      <div className="flex justify-between items-start mb-3">
+                        <div className="flex-1">
+                          <div className="text-sm font-semibold text-gray-800">{record.game}</div>
+                          <div className="text-xs text-gray-500 mt-1">{formatDate(record.date)}</div>
+                        </div>
+                        {getStatusBadge(record.status)}
+                      </div>
+                      
+                      <div className="grid grid-cols-3 gap-3 mt-3 pt-3 border-t border-gray-100">
+                        <div>
+                          <div className="text-xs text-gray-500 mb-1">Bet</div>
+                          <div className="text-sm font-semibold text-blue-600">৳{formatCurrency(record.bet)}</div>
+                        </div>
+                        <div>
+                          <div className="text-xs text-gray-500 mb-1">Win</div>
+                          <div className="text-sm font-semibold text-green-600">৳{formatCurrency(record.win)}</div>
+                        </div>
+                        <div>
+                          <div className="text-xs text-gray-500 mb-1">Refund</div>
+                          <div className="text-sm font-semibold text-yellow-600">৳{formatCurrency(record.refund || 0)}</div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="py-12 text-center">
+                  <div className="flex flex-col items-center justify-center">
+                    <svg className="w-16 h-16 text-gray-300 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} 
+                        d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" 
+                      />
+                    </svg>
+                    <p className="text-gray-500 font-medium">No betting records found</p>
+                    <p className="text-sm text-gray-400 mt-1">Try adjusting your filters or time range</p>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Pagination - Only show when not filtering and API pagination available */}
+            {!hasActiveFilter && pagination.pages > 1 && (
+              <div className="border-t border-gray-200 px-4 py-3 bg-gray-50 flex items-center justify-between">
+                <div className="text-sm text-gray-600">
+                  Showing page {pagination.page} of {pagination.pages} ({pagination.total} total entries)
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => handlePageChange(pagination.page - 1)}
+                    disabled={pagination.page === 1}
+                    className="px-3 py-1 bg-white border border-gray-300 rounded-lg text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  >
+                    Previous
+                  </button>
+                  <div className="flex gap-1">
+                    {Array.from({ length: Math.min(5, pagination.pages) }, (_, i) => {
+                      let pageNum;
+                      if (pagination.pages <= 5) {
+                        pageNum = i + 1;
+                      } else if (pagination.page <= 3) {
+                        pageNum = i + 1;
+                      } else if (pagination.page >= pagination.pages - 2) {
+                        pageNum = pagination.pages - 4 + i;
+                      } else {
+                        pageNum = pagination.page - 2 + i;
+                      }
+                      
+                      return (
+                        <button
+                          key={pageNum}
+                          onClick={() => handlePageChange(pageNum)}
+                          className={`w-8 h-8 rounded-lg text-sm transition-colors ${
+                            pagination.page === pageNum
+                              ? 'bg-cyan-500 text-white'
+                              : 'bg-white border border-gray-300 text-gray-600 hover:bg-gray-50'
+                          }`}
+                        >
+                          {pageNum}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <button
+                    onClick={() => handlePageChange(pagination.page + 1)}
+                    disabled={pagination.page === pagination.pages}
+                    className="px-3 py-1 bg-white border border-gray-300 rounded-lg text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  >
+                    Next
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      <style jsx>{`
+        @keyframes fadeInUp {
+          from {
+            opacity: 0;
+            transform: translateY(20px);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0);
+          }
+        }
+        .animate-fadeInUp {
+          animation: fadeInUp 0.3s ease-out;
+        }
+      `}</style>
     </div>
   );
 };
@@ -3069,58 +3508,505 @@ const BettingRecordTabContent = () => {
 // Account Record Tab Content
 const AccountRecordTabContent = () => {
   const { t, language } = useContext(LanguageContext);
+  const { userData, loading, error, fetchUserData } = useUser();
   const [recordType, setRecordType] = useState('all');
-  const [records, setRecords] = useState([]);
+  const [filteredRecords, setFilteredRecords] = useState([]);
+  const [filterOpen, setFilterOpen] = useState(false);
+  const [filterStatus, setFilterStatus] = useState('');
+  const [filterDate, setFilterDate] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 10;
+
+  // Filter records based on selected type
+  useEffect(() => {
+    if (!userData) return;
+
+    let records = [];
+    
+    // Combine all transaction types
+    if (recordType === 'all' || recordType === 'deposit') {
+      const deposits = userData.depositHistory || [];
+      records = [...records, ...deposits.map(deposit => ({
+        ...deposit,
+        transactionType: 'deposit',
+        originalType: 'deposit',
+        amount: deposit.amount,
+        status: deposit.status,
+        description: deposit.description || `${t.depositDesc?.replace('{method}', deposit.method || t.na) || 'Deposit via ' + (deposit.method || 'N/A')}`,
+        createdAt: deposit.createdAt || deposit.date
+      }))];
+    }
+    
+    if (recordType === 'all' || recordType === 'withdrawal') {
+      const withdrawals = userData.withdrawHistory || [];
+      records = [...records, ...withdrawals.map(withdrawal => ({
+        ...withdrawal,
+        transactionType: 'withdrawal',
+        originalType: 'withdrawal',
+        amount: withdrawal.amount,
+        status: withdrawal.status,
+        description: withdrawal.description || `${t.withdrawalDesc?.replace('{method}', withdrawal.method || t.na) || 'Withdrawal via ' + (withdrawal.method || 'N/A')}`,
+        createdAt: withdrawal.createdAt || withdrawal.date
+      }))];
+    }
+    
+    if (recordType === 'all' || recordType === 'bonus') {
+      const bonuses = userData.bonusActivityLogs || [];
+      records = [...records, ...bonuses.map(bonus => ({
+        ...bonus,
+        transactionType: 'bonus',
+        originalType: 'bonus',
+        amount: bonus.bonusAmount,
+        status: bonus.status || 'completed',
+        description: bonus.description || `${t.bonusDesc?.replace('{bonusType}', bonus.bonusType || 'bonus') || 'Bonus received'}`,
+        createdAt: bonus.activatedAt || bonus.createdAt
+      }))];
+      
+      // Also include bonus transactions from transactionHistory
+      const bonusTransactions = (userData.transactionHistory || []).filter(
+        transaction => transaction.type === 'bonus'
+      );
+      records = [...records, ...bonusTransactions.map(transaction => ({
+        ...transaction,
+        transactionType: 'bonus',
+        originalType: 'bonus',
+        amount: transaction.amount,
+        status: transaction.status,
+        description: transaction.description || t.bonusDesc || 'Bonus transaction',
+        createdAt: transaction.createdAt
+      }))];
+    }
+
+    // Sort by date (newest first)
+    records.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    
+    setFilteredRecords(records);
+    setCurrentPage(1);
+  }, [userData, recordType, t]);
+
+  // Apply additional filters (status and date)
+  const getFilteredRecords = () => {
+    let records = [...filteredRecords];
+    
+    if (filterStatus) {
+      records = records.filter(record => record.status === filterStatus);
+    }
+    
+    if (filterDate) {
+      records = records.filter(record => {
+        const recordDate = new Date(record.createdAt).toISOString().slice(0, 10);
+        return recordDate === filterDate;
+      });
+    }
+    
+    return records;
+  };
+
+  const displayRecords = getFilteredRecords();
+  const hasActiveFilter = filterStatus || filterDate;
+  
+  // Pagination
+  const indexOfLastItem = currentPage * itemsPerPage;
+  const indexOfFirstItem = indexOfLastItem - itemsPerPage;
+  const currentRecords = displayRecords.slice(indexOfFirstItem, indexOfLastItem);
+  const totalPages = Math.ceil(displayRecords.length / itemsPerPage);
+
+  // Format date with seconds
+  const formatDate = (dateString) => {
+    if (!dateString) return '—';
+    
+    const date = new Date(dateString);
+    return new Intl.DateTimeFormat(language.code === 'bn' ? 'bn-BD' : 'en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: true
+    }).format(date);
+  };
+
+  // Get status badge with appropriate styling
+  const getStatusBadge = (status) => {
+    const statusConfig = {
+      'pending': { bg: 'bg-yellow-100', text: 'text-yellow-800', label: 'Pending' },
+      'processing': { bg: 'bg-blue-100', text: 'text-blue-800', label: 'Processing' },
+      'completed': { bg: 'bg-green-100', text: 'text-green-800', label: 'Completed' },
+      'success': { bg: 'bg-green-100', text: 'text-green-800', label: 'Success' },
+      'failed': { bg: 'bg-red-100', text: 'text-red-800', label: 'Failed' },
+      'cancelled': { bg: 'bg-gray-100', text: 'text-gray-800', label: 'Cancelled' },
+      'rejected': { bg: 'bg-red-100', text: 'text-red-800', label: 'Rejected' },
+      'active': { bg: 'bg-green-100', text: 'text-green-800', label: 'Active' }
+    };
+    
+    const config = statusConfig[status?.toLowerCase()] || statusConfig.pending;
+    const label = t[`status${status?.charAt(0).toUpperCase() + status?.slice(1)}`] || config.label;
+    
+    return (
+      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${config.bg} ${config.text}`}>
+        {label}
+      </span>
+    );
+  };
+
+  // Get type badge with styling
+  const getTypeBadge = (type) => {
+    const typeConfig = {
+      'deposit': { bg: 'bg-blue-100', text: 'text-blue-800', icon: '', label: 'Deposit' },
+      'withdrawal': { bg: 'bg-orange-100', text: 'text-orange-800', icon: '', label: 'Withdrawal' },
+      'bonus': { bg: 'bg-purple-100', text: 'text-purple-800', icon: '', label: 'Bonus' },
+      'first_deposit': { bg: 'bg-green-100', text: 'text-green-800', icon: '', label: 'First Deposit' },
+      'special_bonus': { bg: 'bg-pink-100', text: 'text-pink-800', icon: '', label: 'Special Bonus' }
+    };
+    
+    const config = typeConfig[type] || typeConfig.deposit;
+    const label = t[`type${type?.charAt(0).toUpperCase() + type?.slice(1)}`] || config.label;
+    
+    return (
+      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${config.bg} ${config.text}`}>
+        <span>{config.icon}</span>
+        {label}
+      </span>
+    );
+  };
+
+  const formatAmount = (amount) => {
+    return new Intl.NumberFormat(language.code === 'bn' ? 'bn-BD' : 'en-US', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
+    }).format(amount || 0);
+  };
+
+  // Record type buttons
+  const recordTypes = [
+    { id: 'all', label: t?.all || 'All', icon: '📊' },
+    { id: 'deposit', label: t?.deposit || 'Deposit', icon: '💰' },
+    { id: 'withdrawal', label: t?.withdrawal || 'Withdrawal', icon: '💸' },
+    { id: 'bonus', label: t?.bonus || 'Bonus', icon: '🎁' },
+  ];
+
+  if (loading) {
+    return (
+      <div className="bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl shadow-sm p-6">
+        <div className="flex justify-center items-center py-16">
+          <div className="text-center">
+            <div className="animate-spin rounded-full h-12 w-12 border-4 border-t-cyan-500 border-b-cyan-500 border-l-transparent border-r-transparent mx-auto"></div>
+            <p className="text-gray-500 mt-3">{t?.loading || 'Loading records...'}</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl shadow-sm p-6">
+        <div className="text-center py-8">
+          <div className="text-red-500 mb-3 text-5xl">⚠️</div>
+          <p className="text-red-600 mb-3">{error}</p>
+          <button 
+            onClick={fetchUserData}
+            className="px-4 py-2 bg-gradient-to-r from-cyan-500 to-blue-500 text-white rounded-lg hover:shadow-lg transition-all"
+          >
+            {t?.tryAgain || 'Try Again'}
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="bg-gray-50 p-4 rounded-lg border border-gray-200">
-      <h3 className="text-lg font-semibold mb-4 text-gray-800">{t?.accountRecord || 'অ্যাকাউন্ট রেকর্ড'}</h3>
-
-      <div className="flex flex-wrap gap-2 mb-4">
-        {['all', 'deposit', 'withdrawal', 'bonus'].map((type) => (
-          <button
-            key={type}
-            className={`px-3 py-1.5 rounded-lg text-sm cursor-pointer transition-colors ${
-              recordType === type ? 'bg-theme_color2 text-white' : 'bg-white border border-gray-300 text-gray-700 hover:bg-gray-100'
-            }`}
-            onClick={() => setRecordType(type)}
+    <div className="bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl shadow-sm">
+      {/* Filter Drawer */}
+      {filterOpen && (
+        <div
+          className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+          onClick={() => setFilterOpen(false)}
+        >
+          <div
+            className="bg-white w-full max-w-md rounded-2xl shadow-xl animate-fadeInUp"
+            onClick={e => e.stopPropagation()}
           >
-            {type === 'all' && (t?.all || 'সব')}
-            {type === 'deposit' && (t?.deposit || 'ডিপোজিট')}
-            {type === 'withdrawal' && (t?.withdrawal || 'উত্তোলন')}
-            {type === 'bonus' && (t?.bonus || 'বোনাস')}
-          </button>
-        ))}
+            <div className="p-5 border-b border-gray-100">
+              <h3 className="text-xl font-bold text-gray-800">Filter Transactions</h3>
+              <p className="text-sm text-gray-500 mt-1">Narrow down your transaction history</p>
+            </div>
+            
+            <div className="p-5 space-y-4">
+              {/* Status Filter */}
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">
+                  Status
+                </label>
+                <select
+                  value={filterStatus}
+                  onChange={e => setFilterStatus(e.target.value)}
+                  className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm outline-none focus:border-cyan-400 focus:ring-2 focus:ring-cyan-100 bg-gray-50 text-gray-700 transition-all"
+                >
+                  <option value="">All Status</option>
+                  <option value="pending">Pending</option>
+                  <option value="processing">Processing</option>
+                  <option value="completed">Completed</option>
+                  <option value="success">Success</option>
+                  <option value="failed">Failed</option>
+                  <option value="cancelled">Cancelled</option>
+                </select>
+              </div>
+
+              {/* Date Filter */}
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">
+                  Specific Date
+                </label>
+                <input
+                  type="date"
+                  value={filterDate}
+                  onChange={e => setFilterDate(e.target.value)}
+                  className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm outline-none focus:border-cyan-400 focus:ring-2 focus:ring-cyan-100 bg-gray-50 text-gray-700 transition-all"
+                />
+              </div>
+            </div>
+
+            <div className="p-5 border-t border-gray-100 flex gap-3">
+              <button
+                onClick={() => { setFilterStatus(''); setFilterDate(''); setFilterOpen(false); }}
+                className="flex-1 py-2.5 border border-gray-300 rounded-xl text-sm text-gray-600 font-semibold hover:bg-gray-50 transition-colors"
+              >
+                Clear All
+              </button>
+              <button
+                onClick={() => setFilterOpen(false)}
+                className="flex-1 py-2.5 bg-gradient-to-r from-cyan-500 to-blue-500 text-white rounded-xl text-sm font-semibold hover:shadow-lg transition-all"
+              >
+                Apply Filters
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="p-6">
+        {/* Header Section */}
+        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 mb-6">
+          <div>
+            <h3 className="text-2xl font-bold text-gray-800">
+              {t?.accountRecord || 'Account History'}
+            </h3>
+            <p className="text-sm text-gray-500 mt-1">
+              View all your deposits, withdrawals, and bonus transactions
+            </p>
+          </div>
+          
+          <div className="flex items-center gap-3">
+            {hasActiveFilter && displayRecords.length > 0 && (
+              <div className="flex items-center gap-2 px-3 py-2 bg-orange-50 rounded-lg border border-orange-200">
+                <span className="text-orange-600 text-sm">🎯</span>
+                <span className="text-orange-700 text-sm font-medium">
+                  {displayRecords.length} results
+                </span>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Record Type Selector */}
+        <div className="mb-6">
+          <div className="flex flex-wrap gap-2">
+            {recordTypes.map((type) => (
+              <button
+                key={type.id}
+                className={`px-4 py-2 rounded-lg text-sm font-medium transition-all transform hover:scale-105 ${
+                  recordType === type.id
+                    ? 'bg-gradient-to-r from-cyan-500 to-blue-500 text-white shadow-md'
+                    : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-50 hover:border-gray-300'
+                }`}
+                onClick={() => setRecordType(type.id)}
+              >
+                {type.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+
+        {/* Main Table */}
+        <div className="bg-white rounded-xl  overflow-hidden border border-gray-200">
+          {/* Desktop Table View */}
+          <div className="hidden lg:block overflow-x-auto">
+            <table className="w-full">
+              <thead className="bg-gradient-to-r from-gray-50 to-gray-100 border-b-2 border-gray-200">
+                <tr>
+              <th className="py-2 px-4 text-left text-sm border-b border-gray-600">{t.dateTime}</th>
+                <th className="py-2 px-4 text-left text-sm border-b border-gray-600">{t.type}</th>
+                <th className="py-2 px-4 text-left text-sm border-b border-gray-600">{t.amount}</th>
+                <th className="py-2 px-4 text-left text-sm border-b border-gray-600">{t.status}</th>
+                <th className="py-2 px-4 text-left text-sm border-b border-gray-600">{t.description}</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {currentRecords.length > 0 ? (
+                  currentRecords.map((record, index) => (
+                    <tr key={index} className="hover:bg-gray-50 transition-colors">
+                      <td className="py-3 px-6 text-sm text-gray-600 whitespace-nowrap">
+                        {formatDate(record.createdAt)}
+                      </td>
+                      <td className="py-3 px-6">
+                        {getTypeBadge(record.transactionType)}
+                      </td>
+                      <td className={`py-3 px-6 text-sm font-semibold text-right ${
+                        record.transactionType === 'deposit' || record.transactionType === 'bonus' 
+                          ? 'text-green-600' 
+                          : 'text-red-600'
+                      }`}>
+                        {record.transactionType === 'deposit' || record.transactionType === 'bonus' ? '+' : '-'}
+                        ৳{formatAmount(record.amount)}
+                      </td>
+                      <td className="py-3 px-6 text-center">
+                        {getStatusBadge(record.status)}
+                      </td>
+                      <td className="py-3 px-6 text-sm text-gray-500 max-w-xs truncate">
+                        {record.description || '—'}
+                      </td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan="5" className="py-12 text-center">
+                      <div className="flex flex-col items-center justify-center">
+                        <svg className="w-16 h-16 text-gray-300 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} 
+                            d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" 
+                          />
+                        </svg>
+                        <p className="text-gray-500 font-medium">No transactions found</p>
+                        <p className="text-sm text-gray-400 mt-1">Try adjusting your filters or record type</p>
+                      </div>
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Mobile Card View */}
+          <div className="lg:hidden">
+            {currentRecords.length > 0 ? (
+              <div className="divide-y divide-gray-100">
+                {currentRecords.map((record, index) => (
+                  <div key={index} className="p-4 hover:bg-gray-50 transition-colors">
+                    <div className="flex justify-between items-start mb-3">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 mb-2">
+                          {getTypeBadge(record.transactionType)}
+                          {getStatusBadge(record.status)}
+                        </div>
+                        <div className="text-xs text-gray-500">
+                          {formatDate(record.createdAt)}
+                        </div>
+                      </div>
+                      <div className={`text-lg font-bold ${
+                        record.transactionType === 'deposit' || record.transactionType === 'bonus' 
+                          ? 'text-green-600' 
+                          : 'text-red-600'
+                      }`}>
+                        {record.transactionType === 'deposit' || record.transactionType === 'bonus' ? '+' : '-'}
+                        ৳{formatAmount(record.amount)}
+                      </div>
+                    </div>
+                    {record.description && (
+                      <div className="mt-2 text-xs text-gray-500 border-t border-gray-100 pt-2">
+                        {record.description}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="py-12 text-center">
+                <div className="flex flex-col items-center justify-center">
+                  <svg className="w-16 h-16 text-gray-300 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} 
+                      d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" 
+                    />
+                  </svg>
+                  <p className="text-gray-500 font-medium">No transactions found</p>
+                  <p className="text-sm text-gray-400 mt-1">Try adjusting your filters or record type</p>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Pagination */}
+          {totalPages > 1 && (
+            <div className="border-t border-gray-200 px-4 py-3 bg-gray-50 flex items-center justify-between">
+              <div className="text-sm text-gray-600">
+                Showing {indexOfFirstItem + 1} to {Math.min(indexOfLastItem, displayRecords.length)} of {displayRecords.length} entries
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                  disabled={currentPage === 1}
+                  className="px-3 py-1 bg-white border border-gray-300 rounded-lg text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  Previous
+                </button>
+                <div className="flex gap-1">
+                  {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                    let pageNum;
+                    if (totalPages <= 5) {
+                      pageNum = i + 1;
+                    } else if (currentPage <= 3) {
+                      pageNum = i + 1;
+                    } else if (currentPage >= totalPages - 2) {
+                      pageNum = totalPages - 4 + i;
+                    } else {
+                      pageNum = currentPage - 2 + i;
+                    }
+                    
+                    return (
+                      <button
+                        key={pageNum}
+                        onClick={() => setCurrentPage(pageNum)}
+                        className={`w-8 h-8 rounded-lg text-sm transition-colors ${
+                          currentPage === pageNum
+                            ? 'bg-cyan-500 text-white'
+                            : 'bg-white border border-gray-300 text-gray-600 hover:bg-gray-50'
+                        }`}
+                      >
+                        {pageNum}
+                      </button>
+                    );
+                  })}
+                </div>
+                <button
+                  onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                  disabled={currentPage === totalPages}
+                  className="px-3 py-1 bg-white border border-gray-300 rounded-lg text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
-      <div className="overflow-x-auto border border-gray-200 rounded-lg">
-        <table className="min-w-full">
-          <thead className="bg-gray-100">
-            <tr>
-              <th className="py-2 px-3 text-left text-xs font-medium text-gray-600 uppercase border-b border-gray-200">{t?.dateTime || 'তারিখ ও সময়'}</th>
-              <th className="py-2 px-3 text-left text-xs font-medium text-gray-600 uppercase border-b border-gray-200">{t?.type || 'ধরণ'}</th>
-              <th className="py-2 px-3 text-left text-xs font-medium text-gray-600 uppercase border-b border-gray-200">{t?.amount || 'পরিমাণ'}</th>
-              <th className="py-2 px-3 text-left text-xs font-medium text-gray-600 uppercase border-b border-gray-200">{t?.status || 'স্ট্যাটাস'}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {records.length > 0 ? records.map((record, i) => (
-              <tr key={i} className="hover:bg-gray-50">
-                <td className="py-2 px-3 border-b border-gray-200 text-sm text-gray-600">{record.date}</td>
-                <td className="py-2 px-3 border-b border-gray-200 text-sm text-gray-600">{record.type}</td>
-                <td className="py-2 px-3 border-b border-gray-200 text-sm text-gray-600">{record.amount}</td>
-                <td className="py-2 px-3 border-b border-gray-200 text-sm">
-                  <span className={`px-2 py-1 rounded-full text-xs ${record.status === 'completed' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}`}>
-                    {record.status}
-                  </span>
-                </td>
-              </tr>
-            )) : (
-              <tr><td colSpan="4" className="py-6 text-center text-gray-500 text-sm">{t?.noRecords || 'কোন রেকর্ড পাওয়া যায়নি'}</td></tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+      <style jsx>{`
+        @keyframes fadeInUp {
+          from {
+            opacity: 0;
+            transform: translateY(20px);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0);
+          }
+        }
+        .animate-fadeInUp {
+          animation: fadeInUp 0.3s ease-out;
+        }
+      `}</style>
     </div>
   );
 };
@@ -3157,6 +4043,34 @@ const RewardCenterTabContent = () => {
   const [monthlyTimeLeft, setMonthlyTimeLeft] = useState({ d: 0, h: 0, m: 0, s: 0 });
 
   const base_url = import.meta.env.VITE_API_KEY_Base_URL;
+
+  // Level configuration for progress bar
+  const LEVELS = [
+    { name: 'Bronze', threshold: 0, color: '#cd7f32' },
+    { name: 'Silver', threshold: 10000, color: '#c0c0c0' },
+    { name: 'Gold', threshold: 50000, color: '#ffd700' },
+    { name: 'Platinum', threshold: 200000, color: '#e5e4e2' },
+    { name: 'Diamond', threshold: 1000000, color: '#b9f2ff' },
+  ];
+
+  const getLevelData = (bet = 0) => {
+    let currentLevel = LEVELS[0];
+    let nextLevel = LEVELS[1];
+    
+    for (let i = LEVELS.length - 1; i >= 0; i--) {
+      if (bet >= LEVELS[i].threshold) {
+        currentLevel = LEVELS[i];
+        nextLevel = LEVELS[i + 1] || null;
+        break;
+      }
+    }
+    
+    const percentage = nextLevel
+      ? Math.min(100, Math.round(((bet - currentLevel.threshold) / (nextLevel.threshold - currentLevel.threshold)) * 100))
+      : 100;
+    
+    return { currentLevel, nextLevel, percentage, totalBet: bet };
+  };
 
   // ─── Date Helpers ──────────────────────────────────────────────────────────
 
@@ -3318,96 +4232,103 @@ const RewardCenterTabContent = () => {
   const availableCashBonuses = cashBonuses.filter(b => b.canClaim === true);
   const claimedCashBonuses   = cashBonuses.filter(b => b.userStatus === 'claimed');
   const expiredCashBonuses   = cashBonuses.filter(b => b.isExpired === true);
+  
+  // Level progress data
+  const levelData = getLevelData(userData?.lifetime_bet || 0);
 
-  // ─── Shared BonusCard (same as BonusCollection) ────────────────────────────
+  // Progress Bar Component
+  const ProgressBar = ({ percentage, color }) => (
+    <div className="w-full h-2 bg-gray-200 rounded-full overflow-hidden">
+      <div 
+        className="h-full rounded-full transition-all duration-500"
+        style={{ width: `${percentage}%`, backgroundColor: color }}
+      />
+    </div>
+  );
 
-  const BonusCard = ({ tag, title, desc, rows, img, claimed, onClaim, claimLabel }) => (
+  // Level Card Component
+  const LevelCard = () => (
+    <div className="bg-white rounded-2xl p-4 mb-6 shadow-sm border border-cyan-100">
+      <div className="flex justify-between items-center mb-2">
+        <div>
+          <span className="text-sm font-semibold text-gray-600">Current Level</span>
+          <h3 className="text-2xl font-bold" style={{ color: levelData.currentLevel.color }}>
+            {levelData.currentLevel.name}
+          </h3>
+        </div>
+        {levelData.nextLevel && (
+          <div className="text-right">
+            <span className="text-xs text-gray-500">Next: {levelData.nextLevel.name}</span>
+            <p className="text-sm font-semibold text-gray-700">
+              {fmt(levelData.totalBet)} / {fmt(levelData.nextLevel.threshold)}
+            </p>
+          </div>
+        )}
+      </div>
+      <ProgressBar percentage={levelData.percentage} color={levelData.currentLevel.color} />
+      <div className="mt-3 text-xs text-gray-500 text-center">
+        Total Lifetime Bet: {fmt(levelData.totalBet)} ৳
+      </div>
+    </div>
+  );
+
+  // Compact Bonus Card for 2-per-row layout
+  const CompactBonusCard = ({ tag, title, rows, img, claimed, onClaim, claimLabel }) => (
     <div
-      className="relative mb-5 rounded-3xl overflow-visible"
+      className="relative mb-4 rounded-2xl overflow-hidden"
       style={{
-        background: 'linear-gradient(155deg, #e3f7fb 0%, #c9eef7 50%, #b5e6f0 100%)',
-        border: '1.5px solid #a5dcea',
-        boxShadow: '0 4px 20px rgba(11,188,212,0.10)',
+        background: 'linear-gradient(135deg, #e0f7fa 0%, #ffffff 100%)',
+        border: '1px solid #81d4fa',
+        boxShadow: '0 4px 12px rgba(0,0,0,0.05)',
       }}
     >
-      {/* 3D image top-right */}
-      <div className="absolute pointer-events-none z-10" style={{ top: 10, right: -8, width: 150, height: 150 }}>
-        <img
-          src={img}
-          alt="bonus"
-          className="w-[100px] object-contain"
-          style={{ filter: 'drop-shadow(0 8px 20px rgba(0,0,0,0.20))' }}
-        />
-      </div>
-
-      <div className="overflow-hidden rounded-3xl p-[10px]">
-        <div className="px-1 pt-4 pb-3">
-          {/* Pill badge */}
-          <span
-            className="inline-block text-xs border-[1px] border-orange-200 font-semibold rounded-full px-3 py-1 mb-3"
-            style={{ background: '#ffffff', color: '#4a6572' }}
-          >
-            {tag}
-          </span>
-
-          {/* Title */}
-          <p
-            className="font-extrabold mb-3 leading-snug"
-            style={{ fontSize: 17, color: '#0d2b35', maxWidth: '57%', margin: '0 0 12px' }}
-          >
-            {title}
-          </p>
-
-          {/* Optional desc */}
-          {desc && (
-            <p className="text-xs text-slate-500 mb-2 leading-relaxed" style={{ maxWidth: '60%' }}>
-              {desc}
-            </p>
-          )}
-
-          {/* Info rows */}
-          <div className="grid gap-y-1" style={{ gridTemplateColumns: 'auto 1fr', columnGap: 14 }}>
-            {rows.map(([k, v, isTimer]) => (
-              <React.Fragment key={k}>
-                <span className="text-xs whitespace-nowrap" style={{ color: '#527380' }}>{k}</span>
-                <span
-                  className="text-xs font-medium"
-                  style={{
-                    color: isTimer ? '#0bbcd4' : '#112030',
-                    fontFamily: isTimer ? "'Courier New', monospace" : 'inherit',
-                    fontWeight: isTimer ? 700 : 500,
-                  }}
-                >
-                  {v}
-                </span>
-              </React.Fragment>
-            ))}
-          </div>
+      <div className="p-3">
+        {/* Image top-right absolute */}
+        <div className="absolute pointer-events-none z-10" style={{ top: 5, right: 5, width: 60, height: 60 }}>
+          <img src={img} alt="bonus" className="w-12 object-contain opacity-80" />
         </div>
-
-        {/* Claim / Claimed */}
+        
+        {/* Tag */}
+        <span
+          className="inline-block text-[10px] font-semibold rounded-full px-2 py-0.5 mb-2"
+          style={{ background: '#ffffff', color: '#4a6572', border: '0.5px solid #ffe0b2' }}
+        >
+          {tag}
+        </span>
+        
+        {/* Title */}
+        <p className="font-bold text-sm mb-2 pr-12" style={{ color: '#0d2b35' }}>
+          {title}
+        </p>
+        
+        {/* Info rows - simplified for compact view */}
+        <div className="space-y-1 mb-3">
+          {rows.slice(0, 3).map(([k, v], idx) => (
+            <div key={idx} className="flex justify-between items-center">
+              <span className="text-[10px] text-gray-500">{k}</span>
+              <span className="text-[10px] font-semibold text-gray-800">{v}</span>
+            </div>
+          ))}
+        </div>
+        
+        {/* Button */}
         {claimed ? (
-          <div
-            className="flex items-center justify-center gap-2 py-3"
-            style={{ background: '#e6f9f0', borderTop: '1.5px solid #a8e8c4' }}
-          >
-            <MdCheckCircle className="text-green-500 text-lg" />
-            <span className="text-green-700 text-sm font-bold">Already Claimed</span>
+          <div className="flex items-center justify-center gap-1 py-1.5 bg-green-50 rounded-lg">
+            <MdCheckCircle className="text-green-500 text-sm" />
+            <span className="text-green-700 text-xs font-semibold">Claimed</span>
           </div>
         ) : (
           <button
             onClick={!loading ? onClaim : undefined}
             disabled={loading}
-            className="w-full py-2 text-white font-medium rounded-[10px] tracking-wide text-base transition-opacity"
+            className="w-full py-1.5 text-white font-semibold rounded-lg text-sm transition-all active:scale-95"
             style={{
-              background: 'linear-gradient(90deg, #0ab8cc 0%, #00c8dc 50%, #0ab8cc 100%)',
-              border: 'none',
+              background: 'linear-gradient(90deg, #0ab8cc 0%, #00c8dc 100%)',
               cursor: loading ? 'not-allowed' : 'pointer',
-              opacity: loading ? 0.75 : 1,
-              letterSpacing: '0.5px',
+              opacity: loading ? 0.7 : 1,
             }}
           >
-            {loading ? 'Claiming…' : (claimLabel || 'Claim Bonus')}
+            {loading ? '…' : (claimLabel || 'Claim')}
           </button>
         )}
       </div>
@@ -3432,10 +4353,39 @@ const RewardCenterTabContent = () => {
   const wExp = `${pad(weeklyTimeLeft.d)}D:${pad(weeklyTimeLeft.h)}H:${pad(weeklyTimeLeft.m)}M:${pad(weeklyTimeLeft.s)}S`;
   const mExp = `${pad(monthlyTimeLeft.d)}D:${pad(monthlyTimeLeft.h)}H:${pad(monthlyTimeLeft.m)}M:${pad(monthlyTimeLeft.s)}S`;
 
-  // ─── Render ────────────────────────────────────────────────────────────────
+  // Combine all bonuses for grid display
+  const allBonuses = [
+    weeklyBonus && { type: 'weekly', data: weeklyBonus, tag: 'Weekly', title: 'Weekly Reward', img: bonusimg2, 
+      rows: [
+        ['Wager', weeklyBonus.wager_requirement ?? '—'],
+        ['Max', weeklyBonus.max_amount ? fmt(weeklyBonus.max_amount) : 'No Limit'],
+        ['Time', weeklyBonus.status === 'claimed' ? 'Claimed' : isTuesday() ? 'Available!' : wExp],
+      ] },
+    monthlyBonus && { type: 'monthly', data: monthlyBonus, tag: 'Monthly', title: 'Monthly Reward', img: bonusimg3,
+      rows: [
+        ['Wager', monthlyBonus.wager_requirement ?? '—'],
+        ['Max', monthlyBonus.max_amount ? fmt(monthlyBonus.max_amount) : 'No Limit'],
+        ['Time', monthlyBonus.status === 'claimed' ? 'Claimed' : is4thDay() ? 'Available!' : mExp],
+      ] },
+    ...availableCashBonuses.map(b => ({
+      type: 'cash', data: b, tag: b.bonusType?.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) || 'Special',
+      title: b.title, img: imgFor(b.bonusType),
+      rows: [
+        ['Amount', fmt(b.amount) + ' ৳'],
+        ...(b.wager_requirement ? [['Wager', b.wager_requirement]] : []),
+        ...(!b.noExpiry && b.expiresAt ? [['Expires', fmtD(b.expiresAt)]] : []),
+      ],
+    })),
+  ].filter(Boolean);
+
+  // Split into pairs for 2-per-row
+  const bonusPairs = [];
+  for (let i = 0; i < allBonuses.length; i += 2) {
+    bonusPairs.push(allBonuses.slice(i, i + 2));
+  }
 
   return (
-    <div className="bg-slate-50 font-anek">
+    <div className=" font-anek min-h-screen pb-8">
 
       {/* ── Feedback Toast ── */}
       {feedback.message && (
@@ -3463,77 +4413,52 @@ const RewardCenterTabContent = () => {
       )}
 
       <div className="pb-4">
+        {/* ── Level Progress Card ── */}
+        <LevelCard />
 
         {/* ── Section Title ── */}
         <p className="text-xl font-bold text-slate-900 tracking-tight mt-2 mb-4">
-          Unlockable Bonus
+          { t.unlockableBonuses || 'Unlockable Bonuses'}
         </p>
 
-        {/* ── Weekly Bonus Card ── */}
-        {weeklyBonus && (
-          <BonusCard
-            tag="Weekly Bonus"
-            title="Get Your Weekly Reward"
-            rows={[
-              ['Wager',           weeklyBonus.wager_requirement ?? 'No conditions', false],
-              ['Max.Bonus',       weeklyBonus.max_amount ? fmt(weeklyBonus.max_amount) : 'No Limit', false],
-              ['Total Bet',       fmt(weeklyBonus.totalBet || 0) + ' ৳', false],
-              ['Expiration Time', weeklyBonus.status === 'claimed' ? '—' : isTuesday() ? 'Available Today!' : wExp, true],
-            ]}
-            img={bonusimg2}
-            claimed={weeklyBonus.status === 'claimed'}
-            onClaim={() => claimBonus(weeklyBonus._id, 'weekly')}
-          />
-        )}
-
-        {/* ── Monthly Bonus Card ── */}
-        {monthlyBonus && (
-          <BonusCard
-            tag="Monthly Bonus"
-            title="Get Your Monthly Reward"
-            rows={[
-              ['Wager',           monthlyBonus.wager_requirement ?? 'No conditions', false],
-              ['Max.Bonus',       monthlyBonus.max_amount ? fmt(monthlyBonus.max_amount) : 'No Limit', false],
-              ['Total Bet',       fmt(monthlyBonus.totalBet || 0) + ' ৳', false],
-              ['Expiration Time', monthlyBonus.status === 'claimed' ? '—' : is4thDay() ? 'Available Today!' : mExp, true],
-            ]}
-            img={bonusimg3}
-            claimed={monthlyBonus.status === 'claimed'}
-            onClaim={() => claimBonus(monthlyBonus._id, 'monthly')}
-          />
-        )}
-
-        {/* ── Available Cash Bonuses ── */}
-        {availableCashBonuses.length > 0 && (
-          <>
-            <p className="text-xl font-bold text-slate-900 tracking-tight mt-2 mb-4">
-              Special Bonus
+        {/* ── Bonuses Grid - 2 per row ── */}
+        {bonusPairs.length > 0 ? (
+          <div className="space-y-4">
+            {bonusPairs.map((pair, pairIdx) => (
+              <div key={pairIdx} className="grid grid-cols-2 gap-3">
+                {pair.map((bonus, idx) => (
+                  <CompactBonusCard
+                    key={`${bonus.type}-${bonus.data._id || idx}`}
+                    tag={bonus.tag + ' Bonus'}
+                    title={bonus.title}
+                    rows={bonus.rows}
+                    img={bonus.img}
+                    claimed={bonus.type === 'weekly' || bonus.type === 'monthly' 
+                      ? bonus.data.status === 'claimed' 
+                      : false}
+                    onClaim={() => {
+                      if (bonus.type === 'weekly') claimBonus(bonus.data._id, 'weekly');
+                      else if (bonus.type === 'monthly') claimBonus(bonus.data._id, 'monthly');
+                      else claimCashBonus(bonus.data._id);
+                    }}
+                  />
+                ))}
+              </div>
+            ))}
+          </div>
+        ) : (
+          /* ── Empty State ── */
+          <div className="mt-8 bg-white rounded-3xl border border-slate-100 py-12 px-6 flex flex-col items-center text-center">
+            <GiTrophy className="text-5xl text-slate-300 mb-4" />
+            <p className="font-bold text-slate-600 text-base mb-1">No Bonuses Available</p>
+            <p className="text-slate-400 text-sm leading-relaxed">
+              Place bets to earn weekly & monthly bonuses.<br />
+              Check back Tuesday & 4th of each month.
             </p>
-            {availableCashBonuses.map(b => {
-              const tag = b.bonusType
-                ? b.bonusType.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) + ' Bonus'
-                : 'Special Bonus';
-              return (
-                <BonusCard
-                  key={b._id}
-                  tag={tag}
-                  title={b.title}
-                  desc={b.description}
-                  rows={[
-                    ['Amount',    fmt(b.amount) + ' ৳',                              false],
-                    ...(!b.noExpiry && b.expiresAt ? [['Expires', fmtD(b.expiresAt), true]] : []),
-                  ]}
-                  img={imgFor(b.bonusType)}
-                  claimed={false}
-                  onClaim={() => claimCashBonus(b._id)}
-                />
-              );
-            })}
-          </>
+          </div>
         )}
 
-
-        {/* ── Deposit Bonuses ── */}
+        {/* ── Deposit Bonuses Section (separate, also 2 per row) ── */}
         {depositBonusLoading ? (
           <div className="flex items-center justify-center py-6">
             <div
@@ -3543,49 +4468,37 @@ const RewardCenterTabContent = () => {
           </div>
         ) : depositBonuses.length > 0 && (
           <>
-            <p className="text-xl font-bold text-slate-900 tracking-tight mt-2 mb-4">
-              Deposit Bonus
+            <p className="text-xl font-bold text-slate-900 tracking-tight mt-6 mb-4">
+                { t.depositBonuses || 'Deposit Bonuses'}
+              
             </p>
-            {depositBonuses.map((b, idx) => {
-              const bonusImgs = [bonusimg1, bonusimg2, bonusimg3, bonusimg4];
-              const img = bonusImgs[idx % bonusImgs.length];
-              const tag = b.bonusType
-                ? b.bonusType.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) + ' Bonus'
-                : 'Deposit Bonus';
-              const rows = [
-                ...(b.percentage > 0        ? [['Bonus %',     `${b.percentage}%`,  false]] : []),
-                ...(b.maxBonus   > 0        ? [['Max.Bonus',   fmt(b.maxBonus),     false]] : []),
-                ...(b.amount     > 0        ? [['Amount',      fmt(b.amount),       false]] : []),
-                ...(b.minDeposit > 0        ? [['Min.Deposit', fmt(b.minDeposit),   false]] : []),
-                ...(b.wageringRequirement > 0 ? [['Wager',    b.wageringRequirement, false]] : []),
-              ];
-              return (
-                <BonusCard
-                  key={b._id || b.id || idx}
-                  tag={tag}
-                  title={b.name || b.title || 'Deposit Bonus'}
-                  desc={b.description}
-                  rows={rows}
-                  img={img}
-                  claimed={false}
-                  claimLabel="Claim Bonus"
-                  onClaim={() => navigate('/deposit')}
-                />
-              );
-            })}
+            <div className="grid grid-cols-2 gap-3">
+              {depositBonuses.map((b, idx) => {
+                const bonusImgs = [bonusimg1, bonusimg2, bonusimg3, bonusimg4];
+                const img = bonusImgs[idx % bonusImgs.length];
+                const tag = b.bonusType
+                  ? b.bonusType.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+                  : 'Deposit';
+                const rows = [
+                  ...(b.percentage > 0 ? [['Bonus %', `${b.percentage}%`]] : []),
+                  ...(b.maxBonus > 0 ? [['Max', fmt(b.maxBonus)]] : []),
+                  ...(b.minDeposit > 0 ? [['Min Dep.', fmt(b.minDeposit)]] : []),
+                ];
+                return (
+                  <CompactBonusCard
+                    key={b._id || b.id || idx}
+                    tag={tag + ' Bonus'}
+                    title={b.name || b.title || 'Deposit Bonus'}
+                    rows={rows}
+                    img={img}
+                    claimed={false}
+                    claimLabel="Deposit"
+                    onClaim={() => navigate('/deposit')}
+                  />
+                );
+              })}
+            </div>
           </>
-        )}
-
-        {/* ── Empty State ── */}
-        {!weeklyBonus && !monthlyBonus && cashBonuses.length === 0 && depositBonuses.length === 0 && !error && (
-          <div className="mt-8 bg-white rounded-3xl border border-slate-100 py-12 px-6 flex flex-col items-center text-center">
-            <GiTrophy className="text-5xl text-slate-300 mb-4" />
-            <p className="font-bold text-slate-600 text-base mb-1">No Bonuses Available</p>
-            <p className="text-slate-400 text-sm leading-relaxed">
-              Place bets to earn weekly & monthly bonuses.<br />
-              Check back Tuesday & 4th of each month.
-            </p>
-          </div>
         )}
       </div>
 

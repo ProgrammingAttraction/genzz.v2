@@ -31,6 +31,13 @@ const AccountRecord = () => {
     const [withdrawFilterDate, setWithdrawFilterDate] = useState('');
     const [withdrawFilterStatus, setWithdrawFilterStatus] = useState('');
 
+    // Pagination states
+    const [depositPage, setDepositPage] = useState(1);
+    const [withdrawPage, setWithdrawPage] = useState(1);
+    const [depositTotalPages, setDepositTotalPages] = useState(1);
+    const [withdrawTotalPages, setWithdrawTotalPages] = useState(1);
+    const itemsPerPage = 10;
+
     const base_url = import.meta.env.VITE_API_KEY_Base_URL;
 
     // Level logic
@@ -96,31 +103,37 @@ const AccountRecord = () => {
         });
     };
 
-    // Fetch transactions data
+    // Fetch transactions data with pagination
     useEffect(() => {
         const fetchTransactions = async () => {
             try {
                 setLoading(true);
                 const token = localStorage.getItem('token');
 
+                // Fetch withdrawals with pagination from API if supported
                 const withRes = await axios.get(`${base_url}/user/withdrawal-history`, {
                     headers: { Authorization: `Bearer ${token}` }
                 });
 
                 if (withRes.data) {
-                    setWithdrawals(withRes.data.transactions || withRes.data.withdrawals || []);
+                    let withdrawalsData = withRes.data.transactions || withRes.data.withdrawals || [];
+                    setWithdrawals(withdrawalsData);
+                    setWithdrawTotalPages(Math.ceil(withdrawalsData.length / itemsPerPage));
                 }
 
                 if (userData?.depositHistory) {
                     setDeposits(userData.depositHistory);
+                    setDepositTotalPages(Math.ceil(userData.depositHistory.length / itemsPerPage));
                 } else {
                     setDeposits([]);
+                    setDepositTotalPages(1);
                 }
 
             } catch (err) {
                 console.error("Error fetching transactions", err);
                 if (userData?.depositHistory) {
                     setDeposits(userData.depositHistory);
+                    setDepositTotalPages(Math.ceil(userData.depositHistory.length / itemsPerPage));
                 }
             } finally {
                 setLoading(false);
@@ -132,8 +145,20 @@ const AccountRecord = () => {
     }, [userData, base_url]);
 
     useEffect(() => {
-        if (userData?.depositHistory) setDeposits(userData.depositHistory);
+        if (userData?.depositHistory) {
+            setDeposits(userData.depositHistory);
+            setDepositTotalPages(Math.ceil(userData.depositHistory.length / itemsPerPage));
+        }
     }, [userData]);
+
+    // Reset page when filters change
+    useEffect(() => {
+        setDepositPage(1);
+    }, [depositFilterDate, depositFilterStatus]);
+
+    useEffect(() => {
+        setWithdrawPage(1);
+    }, [withdrawFilterDate, withdrawFilterStatus]);
 
     const applyFilter = (list, dateFilter, statusFilter) => {
         return list.filter(item => {
@@ -145,6 +170,27 @@ const AccountRecord = () => {
 
     const filteredDeposits = applyFilter(deposits, depositFilterDate, depositFilterStatus);
     const filteredWithdrawals = applyFilter(withdrawals, withdrawFilterDate, withdrawFilterStatus);
+
+    // Pagination for deposits
+    const paginatedDeposits = filteredDeposits.slice(
+        (depositPage - 1) * itemsPerPage,
+        depositPage * itemsPerPage
+    );
+
+    // Pagination for withdrawals
+    const paginatedWithdrawals = filteredWithdrawals.slice(
+        (withdrawPage - 1) * itemsPerPage,
+        withdrawPage * itemsPerPage
+    );
+
+    // Update total pages based on filtered data
+    useEffect(() => {
+        setDepositTotalPages(Math.ceil(filteredDeposits.length / itemsPerPage));
+    }, [filteredDeposits.length]);
+
+    useEffect(() => {
+        setWithdrawTotalPages(Math.ceil(filteredWithdrawals.length / itemsPerPage));
+    }, [filteredWithdrawals.length]);
 
     const getMethodImage = (method) => {
         if (method === 'bkash') return "https://images.5949390294.com/mcs-images/bank_type/BKASH/BN_2_20240312225413337.png";
@@ -175,6 +221,86 @@ const AccountRecord = () => {
             <span className={`px-2 py-0.5 rounded text-[11px] font-medium ${map[status] || 'bg-gray-100 text-gray-500 border border-gray-200'}`}>
                 {label}
             </span>
+        );
+    };
+
+    // Pagination Component
+    const Pagination = ({ currentPage, totalPages, onPageChange }) => {
+        if (totalPages <= 1) return null;
+
+        const getPageNumbers = () => {
+            const pages = [];
+            const maxVisible = 5;
+            
+            if (totalPages <= maxVisible) {
+                for (let i = 1; i <= totalPages; i++) {
+                    pages.push(i);
+                }
+            } else {
+                if (currentPage <= 3) {
+                    for (let i = 1; i <= 4; i++) pages.push(i);
+                    pages.push('...');
+                    pages.push(totalPages);
+                } else if (currentPage >= totalPages - 2) {
+                    pages.push(1);
+                    pages.push('...');
+                    for (let i = totalPages - 3; i <= totalPages; i++) pages.push(i);
+                } else {
+                    pages.push(1);
+                    pages.push('...');
+                    for (let i = currentPage - 1; i <= currentPage + 1; i++) pages.push(i);
+                    pages.push('...');
+                    pages.push(totalPages);
+                }
+            }
+            return pages;
+        };
+
+        return (
+            <div className="flex items-center justify-center gap-2 mt-4 mb-2">
+                <button
+                    onClick={() => onPageChange(currentPage - 1)}
+                    disabled={currentPage === 1}
+                    className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                        currentPage === 1
+                            ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                            : 'bg-cyan-500 text-white hover:bg-cyan-600'
+                    }`}
+                >
+                    {language.code === 'bn' ? 'পূর্ববর্তী' : 'Prev'}
+                </button>
+                
+                <div className="flex gap-1">
+                    {getPageNumbers().map((page, index) => (
+                        <button
+                            key={index}
+                            onClick={() => typeof page === 'number' && onPageChange(page)}
+                            className={`w-8 h-8 rounded-lg text-sm font-medium transition-colors ${
+                                page === currentPage
+                                    ? 'bg-cyan-500 text-white'
+                                    : page === '...'
+                                    ? 'bg-transparent text-gray-500 cursor-default'
+                                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                            }`}
+                            disabled={page === '...'}
+                        >
+                            {page}
+                        </button>
+                    ))}
+                </div>
+
+                <button
+                    onClick={() => onPageChange(currentPage + 1)}
+                    disabled={currentPage === totalPages}
+                    className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                        currentPage === totalPages
+                            ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                            : 'bg-cyan-500 text-white hover:bg-cyan-600'
+                    }`}
+                >
+                    {language.code === 'bn' ? 'পরবর্তী' : 'Next'}
+                </button>
+            </div>
         );
     };
 
@@ -232,41 +358,39 @@ const AccountRecord = () => {
         );
     };
 
-    // Transaction table — spinner while loading, data or empty state after
-    const TransactionTable = ({ items, emptyLabel, showMethod, isLoading }) => (
+    // Transaction table component with pagination
+    const TransactionTable = ({ items, emptyLabel, showMethod, isLoading, paginationProps }) => (
         <div className="p-[10px] rounded-xl bg-[#D0B1F9] border border-gray-100 overflow-hidden shadow-sm">
             <div className="bg-white rounded-xl overflow-hidden">
                 {isLoading ? (
-                    /* ── Spinner loader ── */
                     <div className="flex justify-center items-center h-32">
                         <div className="animate-spin rounded-full h-8 w-8 border-4 border-t-cyan-500 border-b-cyan-500 border-l-transparent border-r-transparent" />
                     </div>
                 ) : (
-                    <div className="overflow-x-auto">
-                        <table className="w-full">
-                            <thead>
-                                <tr className="bg-gray-50 border-b border-gray-100">
-                                    <th className="py-2.5 px-3 text-left text-gray-400 font-semibold text-[11px] uppercase tracking-wide">
-                                        {t.date || 'Date'}
-                                    </th>
-                                    <th className="py-2.5 px-3 text-left text-gray-400 font-semibold text-[11px] uppercase tracking-wide">
-                                        {t.amount || 'Amount'}
-                                    </th>
-                                    {showMethod && (
+                    <>
+                        <div className="overflow-x-auto">
+                            <table className="w-full">
+                                <thead>
+                                    <tr className="bg-gray-50 border-b border-gray-100">
                                         <th className="py-2.5 px-3 text-left text-gray-400 font-semibold text-[11px] uppercase tracking-wide">
-                                            {t.method || 'Method'}
+                                            {t.date || 'Date'}
                                         </th>
-                                    )}
-                                    <th className="py-2.5 px-3 text-left text-gray-400 font-semibold text-[11px] uppercase tracking-wide">
-                                        {t.status || 'Status'}
-                                    </th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {items.length > 0 ? (
-                                    [...items]
-                                        .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
-                                        .map((item, index) => (
+                                        <th className="py-2.5 px-3 text-left text-gray-400 font-semibold text-[11px] uppercase tracking-wide">
+                                            {t.amount || 'Amount'}
+                                        </th>
+                                        {showMethod && (
+                                            <th className="py-2.5 px-3 text-left text-gray-400 font-semibold text-[11px] uppercase tracking-wide">
+                                                {t.method || 'Method'}
+                                            </th>
+                                        )}
+                                        <th className="py-2.5 px-3 text-left text-gray-400 font-semibold text-[11px] uppercase tracking-wide">
+                                            {t.status || 'Status'}
+                                        </th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {items.length > 0 ? (
+                                        items.map((item, index) => (
                                             <tr
                                                 key={item._id || index}
                                                 className="border-t border-gray-50 hover:bg-gray-50 transition-colors"
@@ -298,19 +422,23 @@ const AccountRecord = () => {
                                                 </td>
                                             </tr>
                                         ))
-                                ) : (
-                                    <tr>
-                                        <td
-                                            colSpan={showMethod ? 4 : 3}
-                                            className="text-center py-10 text-gray-400 text-sm"
-                                        >
-                                            {emptyLabel}
-                                        </td>
-                                    </tr>
-                                )}
-                            </tbody>
-                        </table>
-                    </div>
+                                    ) : (
+                                        <tr>
+                                            <td
+                                                colSpan={showMethod ? 4 : 3}
+                                                className="text-center py-10 text-gray-400 text-sm"
+                                            >
+                                                {emptyLabel}
+                                            </td>
+                                        </tr>
+                                    )}
+                                </tbody>
+                            </table>
+                        </div>
+                        {paginationProps && items.length > 0 && (
+                            <Pagination {...paginationProps} />
+                        )}
+                    </>
                 )}
             </div>
         </div>
@@ -327,7 +455,7 @@ const AccountRecord = () => {
                 >
                     <MdArrowBackIosNew className="text-xl" />
                 </button>
-         <h1 className="text-white font-bold text-[17px] m-0">{t.transactionHistory || 'Transaction History'}</h1>
+                <h1 className="text-white font-bold text-[17px] m-0">{t.transactionHistory || 'Transaction History'}</h1>
                 <div className="w-9" />
             </div>
 
@@ -418,11 +546,16 @@ const AccountRecord = () => {
                     )}
                 </div>
 
-                {/* ── Deposit History ── */}
+                {/* Deposit History */}
                 <div className="mb-4">
                     <div className="flex items-center justify-between mb-2 px-0.5">
                         <h4 className="font-bold text-[14px] text-gray-700">
                             {t.depositHistory || 'Deposit History'}
+                            {!loading && filteredDeposits.length > 0 && (
+                                <span className="ml-2 text-cyan-500 text-[10px] bg-cyan-50 border border-cyan-100 px-2 py-0.5 rounded-full font-semibold">
+                                    {filteredDeposits.length}
+                                </span>
+                            )}
                         </h4>
                         <button
                             onClick={() => setDepositFilterOpen(true)}
@@ -433,14 +566,19 @@ const AccountRecord = () => {
                         </button>
                     </div>
                     <TransactionTable
-                        items={filteredDeposits}
+                        items={paginatedDeposits}
                         emptyLabel={t.noDepositHistory || 'No deposit records found'}
                         showMethod={true}
                         isLoading={loading || userLoading}
+                        paginationProps={{
+                            currentPage: depositPage,
+                            totalPages: depositTotalPages,
+                            onPageChange: setDepositPage
+                        }}
                     />
                 </div>
 
-                {/* ── Withdrawal History ── */}
+                {/* Withdrawal History */}
                 <div className="mb-4">
                     <div className="flex items-center justify-between mb-2 px-0.5">
                         <div className="flex items-center gap-2">
@@ -462,10 +600,15 @@ const AccountRecord = () => {
                         </button>
                     </div>
                     <TransactionTable
-                        items={filteredWithdrawals}
+                        items={paginatedWithdrawals}
                         emptyLabel={t.noWithdrawalHistory || 'No withdrawal records found'}
                         showMethod={false}
                         isLoading={loading || userLoading}
+                        paginationProps={{
+                            currentPage: withdrawPage,
+                            totalPages: withdrawTotalPages,
+                            onPageChange: setWithdrawPage
+                        }}
                     />
                 </div>
 

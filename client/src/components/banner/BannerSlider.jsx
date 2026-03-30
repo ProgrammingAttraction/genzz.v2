@@ -127,7 +127,6 @@ const BannerSlider = () => {
         </div>
         {/* Bottom Notification */}
           <NoticeMarquee/>
-         <GameSlider/>
         {/* Games Section */}
         <Mainpagegame/>
       </section>

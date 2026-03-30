@@ -6,6 +6,7 @@ import Sidebar from "../../sidebar/Sidebar";
 import GameTags from "./GameTags";
 import { FaExpand, FaCompress, FaCheckCircle, FaExclamationTriangle, FaSync } from "react-icons/fa";
 import axios from "axios";
+import loading_logo from "../../../assets/logo.png"
 
 const Gamepage = () => {
   const location = useLocation();
@@ -25,6 +26,7 @@ const Gamepage = () => {
   const [validationStatus, setValidationStatus] = useState(null);
   const [validating, setValidating] = useState(false);
   const [autoValidationRun, setAutoValidationRun] = useState(false);
+  const [progress, setProgress] = useState(0);
   
   // State for controlling sidebar popup and active tab
   const [showPopup, setShowPopup] = useState(false);
@@ -147,7 +149,38 @@ const Gamepage = () => {
     }
   }, [navigate]);
 
-  // Hide loader after 5 seconds
+  // Simulate progress bar animation
+  useEffect(() => {
+    if (!iframeLoaded && gameUrl) {
+      let interval;
+      let currentProgress = 0;
+      
+      interval = setInterval(() => {
+        if (currentProgress < 90) {
+          // Slow down as we approach 90%
+          const increment = currentProgress < 30 ? 4 : currentProgress < 60 ? 3 : 2;
+          currentProgress = Math.min(currentProgress + increment, 90);
+          setProgress(currentProgress);
+        }
+      }, 100);
+      
+      return () => {
+        if (interval) clearInterval(interval);
+      };
+    }
+  }, [iframeLoaded, gameUrl]);
+
+  // Complete progress when iframe loads
+  useEffect(() => {
+    if (iframeLoaded) {
+      setProgress(100);
+      setTimeout(() => {
+        setShowLoader(false);
+      }, 400);
+    }
+  }, [iframeLoaded]);
+
+  // Hide loader after 5 seconds (fallback)
   useEffect(() => {
     const timer = setTimeout(() => setShowLoader(false), 5000);
     return () => clearTimeout(timer);
@@ -163,6 +196,8 @@ const Gamepage = () => {
   const handleRefreshGame = () => {
     if (!gameUrl) return;
     setIframeLoaded(false);
+    setProgress(0);
+    setShowLoader(true);
     const iframe = document.querySelector(".game-iframe");
     if (iframe) iframe.src = iframe.src;
   };
@@ -326,19 +361,50 @@ const Gamepage = () => {
                       allow="autoplay; encrypted-media; fullscreen"
                     />
 
-                    {!iframeLoaded && (
-                      <div className="absolute inset-0 bg-white flex flex-col items-center justify-center">
-                        <div className="relative w-16 h-16 mb-4">
-                          {/* First Ring - Teal */}
-                          <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-16 h-16 border-3 border-gray-200 border-t-teal-500 rounded-full animate-spin"></div>
-                          {/* Second Ring - Purple */}
-                          <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-12 h-12 border-3 border-gray-200 border-t-teal-500 rounded-full animate-spin animation-delay-200"></div>
-                          {/* Third Ring - Amber */}
-                          <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-8 h-8 border-3 border-gray-200 border-t-teal-500 rounded-full animate-spin animation-delay-400"></div>
+                    {!iframeLoaded && showLoader && (
+                      <div className="absolute inset-0 bg-gradient-to-br from-gray-50 to-white flex flex-col items-center justify-center">
+                        {/* Animated Gradient Progress Bar Container */}
+                        <div className="w-80 md:w-96 max-w-[85%]">
+                          {/* Progress Bar Label */}
+                          <div className="flex justify-center items-center mb-3  m-auto">
+                            <img src={loading_logo} className="w-[150px]" alt="" />
+                          </div>
+                          
+                          {/* Gradient Progress Bar */}
+                          <div className="relative h-3 bg-gray-100 rounded-full overflow-hidden shadow-inner">
+                            <div 
+                              className="absolute top-0 left-0 h-full rounded-full transition-all duration-300 ease-out"
+                              style={{ 
+                                width: `${progress}%`,
+                                background: 'linear-gradient(90deg, #14b8a6, #8b5cf6, #ec489a)',
+                                backgroundSize: '200% 100%',
+                                animation: progress < 100 ? 'gradientShift 1.5s ease infinite' : 'none'
+                              }}
+                            >
+                              {/* Shimmer Effect */}
+                              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent animate-shimmer"></div>
+                            </div>
+                          </div>
+                          
+                          {/* Dynamic Loading Message */}
+                          <div className="mt-4 text-center">
+                            <p className="text-sm text-gray-600 font-medium animate-pulse">
+                              {progress === 100 ? "Game is ready!" : 
+                               progress < 20 ? "🎮 Initializing game engine..." : 
+                               progress < 40 ? "📦 Loading game assets..." : 
+                               progress < 60 ? "⚙️ Configuring settings..." : 
+                               progress < 80 ? "🎨 Preparing graphics..." : 
+                               "✨ Almost there..."}
+                            </p>
+                            {progress < 100 && (
+                              <div className="mt-2 flex justify-center gap-1">
+                                <div className="w-1 h-1 bg-teal-400 rounded-full animate-bounce" style={{ animationDelay: '0s' }}></div>
+                                <div className="w-1 h-1 bg-teal-400 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
+                                <div className="w-1 h-1 bg-teal-400 rounded-full animate-bounce" style={{ animationDelay: '0.4s' }}></div>
+                              </div>
+                            )}
+                          </div>
                         </div>
-                        <p className="text-gray-600 text-lg font-[600] animate-pulse">
-                          Game is loading...
-                        </p>
                       </div>
                     )}
                     
@@ -397,6 +463,47 @@ const Gamepage = () => {
           </div>
         </div>
       </div>
+      
+      {/* Custom CSS for animations */}
+      <style>{`
+        @keyframes gradientShift {
+          0% {
+            background-position: 0% 50%;
+          }
+          50% {
+            background-position: 100% 50%;
+          }
+          100% {
+            background-position: 0% 50%;
+          }
+        }
+        
+        @keyframes shimmer {
+          0% {
+            transform: translateX(-100%);
+          }
+          100% {
+            transform: translateX(100%);
+          }
+        }
+        
+        .animate-shimmer {
+          animation: shimmer 1.5s infinite;
+        }
+        
+        @keyframes bounce {
+          0%, 100% {
+            transform: translateY(0);
+          }
+          50% {
+            transform: translateY(-6px);
+          }
+        }
+        
+        .animate-bounce {
+          animation: bounce 0.6s infinite;
+        }
+      `}</style>
     </section>
   );
 };

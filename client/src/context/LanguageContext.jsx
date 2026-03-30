@@ -804,6 +804,8 @@ updateTransactionPassword: 'ট্রানজেকশন পাসওয়া
   paymentStatusCheckError: "পেমেন্ট স্ট্যাটাস যাচাই করতে ত্রুটি হয়েছে",
   processing: "প্রসেসিং...",
   bkashFast: "বিকাশ ফাস্ট",
+  unlockableBonuses: 'আনলকযোগ্য বোনাসসমূহ',
+depositBonuses: 'ডিপোজিট বোনাসসমূহ',
   requestDeposit: "জমার জন্য আবেদন করুন",
   termsAndConditions: "শর্তাবলী:",
   conditionMinDeposit: "সর্বনিম্ন ডিপোজিট পরিমাণ ৩০০ টাকা",

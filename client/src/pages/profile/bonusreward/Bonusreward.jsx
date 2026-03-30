@@ -97,103 +97,93 @@ function Ring({ pct }) {
 function BonusCard({ tag, title, desc, rows, img, canClaim, claimed, loading, onClaim }) {
   return (
     <div
-      className="relative mb-5 rounded-3xl overflow-visible"
+      className="relative mb-5 rounded-[40px] overflow-visible"
       style={{
-        background: 'linear-gradient(155deg, #e3f7fb 0%, #c9eef7 50%, #b5e6f0 100%)',
-        border: '1.5px solid #a5dcea',
-        boxShadow: '0 4px 20px rgba(11,188,212,0.10)',
+        // EXACT BACKGROUND: Matches the soft cyan-to-white look
+        background: 'linear-gradient(135deg, #e0f7fa 0%, #ffffff 100%)',
+        border: '2px solid #81d4fa',
+        boxShadow: '0 10px 30px rgba(0, 0, 0, 0.05)',
       }}
     >
-      {/* ── 3D IMAGE: absolute top-right, overflows upward ── */}
-      <div
-        className="absolute pointer-events-none z-10"
-        style={{ top: 10, right: -8, width: 150, height: 150 }}
-      >
-        <img
-          src={img}
-          alt="bonus"
-          className="w-[100px]  object-contain"
-          style={{ filter: 'drop-shadow(0 8px 20px rgba(0,0,0,0.20))' }}
-        />
-      </div>
+      <div className="rounded-[38px] p-6">
+        {/* Main content flex container */}
+        <div className="flex justify-between items-center gap-4">
+          
+          {/* LEFT CONTENT */}
+          <div className="flex-1">
+            {/* Tag / Pill */}
+            <span
+              className="inline-block text-xs border border-orange-200 font-medium rounded-full px-5 py-1.5 mb-4"
+              style={{
+                background: '#ffffff',
+                color: '#607d8b',
+              }}
+            >
+              {tag}
+            </span>
 
-      {/* ── INNER (clipped so button corners stay rounded) ── */}
-      <div className="overflow-hidden rounded-3xl p-[10px]">
+            {/* Title */}
+            <h2
+              className="font-bold mb-3 text-[#0d2b35]"
+              style={{ fontSize: '20px', lineHeight: '1.2' }}
+            >
+              {title}
+            </h2>
 
-        {/* TOP CONTENT */}
-        <div className="px-1 pt-4 pb-3">
+            {/* Data Rows */}
+            <div className="grid gap-y-1" style={{ gridTemplateColumns: 'auto 1fr', columnGap: '18px' }}>
+              {rows.map(([k, v, isTimer]) => (
+                <React.Fragment key={k}>
+                  <span className="text-xs text-[#527380] whitespace-nowrap">{k}</span>
+                  <span
+                    className="text-xs font-bold"
+                    style={{
+                      color: isTimer ? '#ff8a80' : '#112030',
+                    }}
+                  >
+                    {v}
+                  </span>
+                </React.Fragment>
+              ))}
+            </div>
+          </div>
 
-          {/* Pill badge */}
-          <span
-            className="inline-block text-xs border-[1px] border-orange-200  font-semibold rounded-full px-3 py-1 mb-3"
-            style={{
-              background: '#ffffff',
-              color: '#4a6572',
-            }}
-          >
-            {tag}
-          </span>
-
-          {/* Title — max-width ~58% so image doesn't overlap it */}
-          <p
-            className="font-extrabold mb-3 leading-snug"
-            style={{ fontSize: 17, color: '#0d2b35', maxWidth: '57%', margin: '0 0 12px' }}
-          >
-            {title}
-          </p>
-
-          {/* Optional desc */}
-          {desc && (
-            <p className="text-xs text-slate-500 mb-2 leading-relaxed" style={{ maxWidth: '60%' }}>
-              {desc}
-            </p>
-          )}
-
-          {/* Info rows grid */}
-          <div className="grid gap-y-1" style={{ gridTemplateColumns: 'auto 1fr', columnGap: 14 }}>
-            {rows.map(([k, v, isTimer]) => (
-              <React.Fragment key={k}>
-                <span className="text-xs whitespace-nowrap" style={{ color: '#527380' }}>{k}</span>
-                <span
-                  className="text-xs font-medium"
-                  style={{
-                    color: isTimer ? '#0bbcd4' : '#112030',
-                    fontFamily: isTimer ? "'Courier New', monospace" : 'inherit',
-                    fontWeight: isTimer ? 700 : 500,
-                  }}
-                >
-                  {v}
-                </span>
-              </React.Fragment>
-            ))}
+          {/* RIGHT IMAGE: No absolute positioning, standard flow */}
+          <div className="flex-shrink-0">
+            <img
+              src={img}
+              alt="bonus"
+              className="w-[160px] h-auto object-contain"
+              style={{ filter: 'drop-shadow(0 12px 20px rgba(0,0,0,0.15))' }}
+            />
           </div>
         </div>
 
-        {/* ── CLAIM BUTTON / CLAIMED STATE ── */}
-        {claimed ? (
-          <div
-            className="flex items-center justify-center gap-2 py-3"
-            style={{ background: '#e6f9f0', borderTop: '1.5px solid #a8e8c4' }}
-          >
-            <MdCheckCircle className="text-green-500 text-lg" />
-            <span className="text-green-700 text-sm font-bold">Already Claimed</span>
-          </div>
-        ) : (
-          <button
-            onClick={!loading ? onClaim : undefined}
-            disabled={loading}
-            className="w-full py-2 text-white font-medium rounded-[10px] tracking-wide text-base transition-opacity"
-            style={{
-              background: 'linear-gradient(90deg, #0ab8cc 0%, #00c8dc 50%, #0ab8cc 100%)',
-              border: 'none',
-              cursor: loading ? 'not-allowed' : 'pointer',
-              opacity: loading ? 0.75 : 1,
-              letterSpacing: '0.5px',
-            }}
-          >
-            {loading ? 'Claiming…' : 'Claim Bonus'}
-          </button>
-        )}
+        {/* CLAIM BUTTON */}
+        <div className="mt-6 flex justify-center">
+          {claimed ? (
+            <div className="flex items-center gap-2 text-green-600 font-bold py-3">
+              <MdCheckCircle /> Already Claimed
+            </div>
+          ) : (
+            <button
+              onClick={onClaim}
+              disabled={loading}
+              className="w-[75%] py-3 text-white font-bold rounded-2xl transition-all active:scale-95"
+              style={{
+                background: 'linear-gradient(to right, #00bad4, #00d4eb)',
+                // EXACT BUTTON SHADOW: The cyan glow from the image
+                boxShadow: '0 8px 22px rgba(0, 186, 212, 0.45)',
+                border: 'none',
+                fontSize: '17px',
+                cursor: loading ? 'not-allowed' : 'pointer',
+                opacity: loading ? 0.8 : 1
+              }}
+            >
+              {loading ? 'Claiming…' : 'Claim Bonus'}
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -228,7 +218,7 @@ function MiniRow({ img, title, sub, amount, dimmed, strike }) {
 const BonusCollection = () => {
   const { userData, fetchUserData } = useUser();
   const navigate = useNavigate();
-
+    const { t, language } = useContext(LanguageContext);
   const [loading,        setLoading]        = useState(true);
   const [refreshing,     setRefreshing]     = useState(false);
   const [weekly,         setWeekly]         = useState(null);
@@ -441,7 +431,7 @@ const BonusCollection = () => {
 
         {/* ── SECTION TITLE ── */}
         <p className="text-xl font-bold text-slate-900 tracking-tight mt-6 mb-4">
-          Unlockable Bonus
+          { t.unlockableBonuses || 'Unlockable Bonuses'}
         </p>
 
         {/* ── WEEKLY BONUS CARD ── */}
@@ -516,7 +506,7 @@ const BonusCollection = () => {
         ) : depositBonuses.length > 0 && (
           <>
             <p className="text-xl font-bold text-slate-900 tracking-tight mt-2 mb-4">
-              Deposit Bonus
+           { t.depositBonuses || 'Deposit Bonuses'}
             </p>
             {depositBonuses.map((b, idx) => {
               const tag = b.bonusType
