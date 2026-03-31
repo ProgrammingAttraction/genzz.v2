@@ -29,7 +29,7 @@ const GameCard = ({ game, onPlayGame, t }) => {
         <img
           src={game.imageUrl}
           alt={game.name || game.gameName}
-          className="w-full h-full object-cover rounded-xl transition-transform duration-300 pointer-events-none"
+          className="w-full h-full rounded-xl transition-transform duration-300 pointer-events-none"
         />
       </div>
 
@@ -207,7 +207,7 @@ const GameSlider = () => {
         onMouseLeave={handleMouseLeave}
         onMouseUp={handleMouseUp}
         onMouseMove={handleMouseMove}
-        className={`flex gap-3 overflow-x-auto pb-2 cursor-grab active:cursor-grabbing ${
+        className={`flex gap-7 overflow-x-auto pb-2 cursor-grab active:cursor-grabbing ${
           isDragging ? 'scroll-auto' : 'scroll-smooth snap-x snap-mandatory'
         }`}
         style={{ scrollbarWidth: 'none', msOverflowStyle: 'none', WebkitOverflowScrolling: 'touch' }}

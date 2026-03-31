@@ -30,7 +30,7 @@ const transporter = nodemailer.createTransport({
     service: "Gmail",
     auth: {
         user: "support@genzz.casino",
-        pass: "otzq xvpe fokg vcbq",
+        pass: "rxda wyar nomk tlfa",
     },
 });
 
